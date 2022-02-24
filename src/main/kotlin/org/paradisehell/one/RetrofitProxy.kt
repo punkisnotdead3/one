@@ -1,5 +1,7 @@
 package org.paradisehell.one
 
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import retrofit2.Retrofit
 import java.lang.reflect.*
 import kotlin.coroutines.Continuation
@@ -17,19 +19,19 @@ import kotlin.coroutines.CoroutineContext
 inline fun <reified T> T.proxyRetrofit(): T {
     val retrofitHandler = Proxy.getInvocationHandler(this)
     return Proxy.newProxyInstance(
-        T::class.java.classLoader, arrayOf(T::class.java)
+            T::class.java.classLoader, arrayOf(T::class.java)
     ) { proxy, method, args ->
         method.takeIf { it.isSuspendMethod }?.getSuspendReturnType()
-            ?.let { FactoryRegistry.getThrowableResolver(it) }
-            ?.let { resolver ->
-                args.updateAt(
-                    args.lastIndex,
-                    FakeSuccessContinuationWrapper(
-                        args.last() as Continuation<Any>,
-                        resolver as ThrowableResolver<Any>
+                ?.let { FactoryRegistry.getThrowableResolver(it) }
+                ?.let { resolver ->
+                    args.updateAt(
+                            args.lastIndex,
+                            FakeSuccessContinuationWrapper(
+                                    args.last() as Continuation<Any>,
+                                    resolver as ThrowableResolver<Any>
+                            )
                     )
-                )
-            }
+                }
         retrofitHandler.invoke(proxy, method, args)
     } as T
 }
@@ -39,7 +41,7 @@ inline fun <reified T> T.proxyRetrofit(): T {
  */
 val Method.isSuspendMethod: Boolean
     get() = genericParameterTypes.lastOrNull()
-        ?.let { it as? ParameterizedType }?.rawType == Continuation::class.java
+            ?.let { it as? ParameterizedType }?.rawType == Continuation::class.java
 
 /**
  * Get a suspend method return type, if the method is not a suspend method return null.
@@ -48,8 +50,8 @@ val Method.isSuspendMethod: Boolean
  */
 fun Method.getSuspendReturnType(): Type? {
     return genericParameterTypes.lastOrNull()
-        ?.let { it as? ParameterizedType }?.actualTypeArguments?.firstOrNull()
-        ?.let { it as? WildcardType }?.lowerBounds?.firstOrNull()
+            ?.let { it as? ParameterizedType }?.actualTypeArguments?.firstOrNull()
+            ?.let { it as? WildcardType }?.lowerBounds?.firstOrNull()
 }
 
 /**
@@ -70,21 +72,26 @@ fun Array<Any?>.updateAt(index: Int, updated: Any?) {
  * @param throwableResolver [ThrowableResolver] to resolve [Throwable]
  */
 class FakeSuccessContinuationWrapper<T>(
-    private val original: Continuation<T>,
-    private val throwableResolver: ThrowableResolver<T>,
+        private val original: Continuation<T>,
+        private val throwableResolver: ThrowableResolver<T>,
 ) : Continuation<T> {
 
     override val context: CoroutineContext = original.context
 
     override fun resumeWith(result: Result<T>) {
-        result.onSuccess {
-            // when it's success, resume with original Continuation
-            original.resumeWith(result)
-        }.onFailure {
-            // when it's failure, resume a wrapper success which contain
-            // failure, so we don't need to add try catch
-            val fakeSuccessResult = throwableResolver.resolve(it)
-            original.resumeWith(Result.success(fakeSuccessResult))
+        runBlocking {
+            withContext(context) {
+                result.onSuccess {
+                    // when it's success, resume with original Continuation
+                    original.resumeWith(result)
+                }.onFailure {
+                    // when it's failure, resume a wrapper success which contain
+                    // failure, so we don't need to add try catch
+                    val fakeSuccessResult = throwableResolver.resolve(it)
+                    original.resumeWith(Result.success(fakeSuccessResult))
+                }
+            }
         }
+
     }
 }
